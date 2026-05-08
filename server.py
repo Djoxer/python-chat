@@ -110,12 +110,10 @@ def handle_client(client):
                     threading.Thread(target=shutdown_server, daemon=True).start()
                     return
 
-            else:
-                # Normale Nachricht: in DB persistieren + an alle broadcasten
-                if uid and msg:
+            elif msg:
+                if uid:
                     db.send_message(chat_id, uid, msg)
-                formatted = f"[{get_time()}] {username}: {msg}\n"
-                broadcast(formatted.encode('utf-8'))
+                broadcast(f"[{get_time()}] {username}: {msg}\n".encode('utf-8'))
 
         except:
             # Unerwarteter Disconnect (z.B. Fenster geschlossen ohne /quit)
