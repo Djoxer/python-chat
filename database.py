@@ -32,8 +32,14 @@ class PythonChatDB:
 
     @property
     def db(self):
-        """Gibt die Verbindung des aufrufenden Threads zurück; legt sie bei Bedarf an."""
+        """Thread-lokale Verbindung — reconnectet automatisch bei Verbindungsverlust."""
         if not hasattr(self._local, 'conn'):
+            self._local.conn = pymysql.connect(**self._cfg)
+            return self._local.conn
+        try:
+            self._local.conn.ping(reconnect=True)
+        except Exception:
+            # ping() konnte nicht reconnecten — neue Verbindung aufbauen
             self._local.conn = pymysql.connect(**self._cfg)
         return self._local.conn
 
