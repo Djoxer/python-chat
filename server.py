@@ -7,17 +7,19 @@ from database import PythonChatDB
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 HOST = '0.0.0.0'    # lauscht auf allen Interfaces — für LAN-Betrieb geeignet
 PORT = 55555
+ADMINS = {"admin"}   # Usernames mit /shutdown-Berechtigung — erweiterbar
 
 db = PythonChatDB()  # DB-Verbindung beim Start — Credentials via .env
 
 # Globale Dicts: client-Socket als Key, Werte als Value
 # Bewusst als Dict statt Klasse gehalten — einfach, lesbar, für diesen Scope ausreichend
-clients   = []        # alle aktiven Sockets
-usernames = {}        # socket → username
-addresses = {}        # socket → (ip, port)
-user_ids  = {}        # socket → DB-user_id (für leave_user / send_message)
-chat_id   = None      # wird in main() gesetzt, eine Session = ein Chat
-clients_lock = threading.Lock()  # schützt alle vier globalen Dicts/Listen
+clients      = []        # alle aktiven Sockets
+usernames    = {}        # socket → username
+addresses    = {}        # socket → (ip, port)
+user_ids     = {}        # socket → DB-user_id (für leave_user / send_message)
+chat_id      = None      # wird in main() gesetzt, eine Session = ein Chat
+owner_socket = None      # erster eingeloggter Client = Server-Owner
+clients_lock = threading.Lock()  # schützt alle globalen Dicts/Listen inkl. owner_socket
 
 # ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -42,12 +44,15 @@ def cleanup_client(client):
     Entfernt einen Client aus allen globalen Dicts und setzt left_at in der DB.
     Wird bei /quit, Disconnect und /shutdown aufgerufen.
     """
+    global owner_socket
     with clients_lock:
         if client in clients:
             clients.remove(client)
         usernames.pop(client, None)
         addresses.pop(client, None)
         uid = user_ids.pop(client, None)
+        if client is owner_socket:
+            owner_socket = None
     if uid:
         db.leave_user(uid)  # Abmeldezeit in DB persistieren — außerhalb des Locks (I/O)
 
@@ -77,15 +82,20 @@ def handle_client(client):
                 break
 
             elif msg.lower() == "/shutdown":
-                # Nur für Admin-Zwecke — fährt den gesamten Server herunter
-                broadcast("🔴 SERVER WIRD HERUNTERGEFAHREN...\n".encode('utf-8'))
-                print(f"[{get_datetime()}] SHUTDOWN durch {username}")
-                db.close_chat(chat_id)
-                cleanup_client(client)
-                client.close()
-                # In eigenem Thread damit der Handler sauber returnen kann
-                threading.Thread(target=shutdown_server, daemon=True).start()
-                return
+                with clients_lock:
+                    is_owner = (client is owner_socket)
+                if not is_owner and username not in ADMINS:
+                    client.send("⛔ Nur Admins oder der Server-Owner dürfen den Server herunterfahren.\n".encode('utf-8'))
+                else:
+                    broadcast("🔴 SERVER WIRD HERUNTERGEFAHREN...\n".encode('utf-8'))
+                    print(f"[{get_datetime()}] SHUTDOWN durch {username}")
+                    if chat_id is not None:
+                        db.close_chat(chat_id)
+                    cleanup_client(client)
+                    client.close()
+                    # In eigenem Thread damit der Handler sauber returnen kann
+                    threading.Thread(target=shutdown_server, daemon=True).start()
+                    return
 
             else:
                 # Normale Nachricht: in DB persistieren + an alle broadcasten
