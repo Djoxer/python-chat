@@ -17,6 +17,7 @@ usernames = {}        # socket → username
 addresses = {}        # socket → (ip, port)
 user_ids  = {}        # socket → DB-user_id (für leave_user / send_message)
 chat_id   = None      # wird in main() gesetzt, eine Session = ein Chat
+clients_lock = threading.Lock()  # schützt alle vier globalen Dicts/Listen
 
 # ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
@@ -28,7 +29,9 @@ def get_time():
 
 def broadcast(message: bytes):
     """Sendet eine Nachricht an alle verbundenen Clients."""
-    for c in clients[:]:   # Kopie der Liste — cleanup_client kann sie währenddessen verändern
+    with clients_lock:
+        targets = clients[:]
+    for c in targets:
         try:
             c.send(message)
         except:
@@ -39,13 +42,14 @@ def cleanup_client(client):
     Entfernt einen Client aus allen globalen Dicts und setzt left_at in der DB.
     Wird bei /quit, Disconnect und /shutdown aufgerufen.
     """
-    if client in clients:
-        clients.remove(client)
-    usernames.pop(client, None)
-    addresses.pop(client, None)
-    uid = user_ids.pop(client, None)
+    with clients_lock:
+        if client in clients:
+            clients.remove(client)
+        usernames.pop(client, None)
+        addresses.pop(client, None)
+        uid = user_ids.pop(client, None)
     if uid:
-        db.leave_user(uid)  # Abmeldezeit in DB persistieren
+        db.leave_user(uid)  # Abmeldezeit in DB persistieren — außerhalb des Locks (I/O)
 
 # ─── Client Handler ──────────────────────────────────────────────────────────
 
@@ -102,7 +106,9 @@ def handle_client(client):
 def shutdown_server():
     """Benachrichtigt alle Clients und beendet den Prozess."""
     print("Server wird beendet...")
-    for c in clients[:]:
+    with clients_lock:
+        targets = clients[:]
+    for c in targets:
         try:
             c.send("🔴 Server wurde vom Administrator heruntergefahren.\n".encode('utf-8'))
             c.close()
@@ -141,10 +147,11 @@ def main():
 
         # User in DB registrieren, ID cachen
         uid = db.join_user(chat_id, username, addr[0])
-        user_ids[client]  = uid
-        usernames[client] = username
-        addresses[client] = addr
-        clients.append(client)
+        with clients_lock:
+            user_ids[client]  = uid
+            usernames[client] = username
+            addresses[client] = addr
+            clients.append(client)
 
         print(f"User {username} → DB-ID {uid}")
 
