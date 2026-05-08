@@ -130,7 +130,7 @@ def shutdown_server():
 # ─── Main ────────────────────────────────────────────────────────────────────
 
 def main():
-    global chat_id
+    global chat_id, owner_socket
 
     # Neuen Chat-Datensatz in DB anlegen — jeder Server-Start = neue Session
     chat_id = db.create_chat()
@@ -149,11 +149,25 @@ def main():
         try:
             username = client.recv(1024).decode('utf-8').strip()
             if not username:
+                client.send("ERROR:Kein Username angegeben\n".encode('utf-8'))
                 client.close()
                 continue
         except:
             client.close()
             continue
+
+        # Eindeutigkeit prüfen, dann mit OK/ERROR antworten
+        with clients_lock:
+            taken = username in usernames.values()
+            is_first = (owner_socket is None)
+
+        if taken:
+            client.send("ERROR:Username bereits vergeben\n".encode('utf-8'))
+            client.close()
+            print(f"[{get_datetime()}] Abgewiesen (Username vergeben): {username}")
+            continue
+
+        client.send("OK\n".encode('utf-8'))
 
         # User in DB registrieren, ID cachen
         uid = db.join_user(chat_id, username, addr[0])
@@ -162,6 +176,8 @@ def main():
             usernames[client] = username
             addresses[client] = addr
             clients.append(client)
+            if is_first:
+                owner_socket = client
 
         print(f"User {username} → DB-ID {uid}")
 

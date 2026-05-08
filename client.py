@@ -59,6 +59,13 @@ def try_connect():
         client.connect((HOST, PORT))
         client.send(name.encode('utf-8'))   # Server erwartet Username als erstes Paket
 
+        response = client.recv(1024).decode('utf-8').strip()
+        if response.startswith("ERROR:"):
+            status_label.config(text=response[6:])
+            client.close()
+            client = None
+            return
+
         username = name
         status_label.config(text="Verbunden!", fg="green")
 
