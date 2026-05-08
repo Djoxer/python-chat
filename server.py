@@ -88,10 +88,7 @@ def handle_client(client):
             msg = raw.decode('utf-8', errors='replace').strip()
 
             if msg.lower() == "/quit":
-                # Sauberes Verlassen: Broadcast → DB → Cleanup → Socket schließen
                 broadcast(f"[{get_time()}] {username} hat den Chat verlassen\n".encode('utf-8'))
-                if uid:
-                    db.leave_user(uid)
                 cleanup_client(client)
                 client.close()
                 print(f"[{get_datetime()}] {username} /quit")
