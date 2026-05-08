@@ -1,7 +1,26 @@
 import socket
+import struct
 import threading
 import tkinter as tk
 from tkinter import ttk, messagebox
+
+# ─── TCP-Framing ─────────────────────────────────────────────────────────────
+
+def _recv_exact(sock, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError
+        buf += chunk
+    return bytes(buf)
+
+def send_msg(sock, data: bytes):
+    sock.sendall(struct.pack('>I', len(data)) + data)
+
+def recv_msg(sock) -> bytes:
+    length = struct.unpack('>I', _recv_exact(sock, 4))[0]
+    return _recv_exact(sock, length)
 
 # ─── Konfiguration ───────────────────────────────────────────────────────────
 HOST = '127.0.0.1'   # Server-IP — für LAN ändern, z.B. '192.168.1.x'
@@ -57,9 +76,9 @@ def try_connect():
     try:
         client = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         client.connect((HOST, PORT))
-        client.send(name.encode('utf-8'))   # Server erwartet Username als erstes Paket
+        send_msg(client, name.encode('utf-8'))   # Server erwartet Username als erstes Paket
 
-        response = client.recv(1024).decode('utf-8').strip()
+        response = recv_msg(client).decode('utf-8').strip()
         if response.startswith("ERROR:"):
             status_label.config(text=response[6:])
             client.close()
@@ -99,14 +118,14 @@ def send_message():
 
     if msg.lower() == "/quit":
         try:
-            client.send("/quit".encode('utf-8'))
+            send_msg(client, b"/quit")
         except:
             pass
         root.quit()
         return
 
     try:
-        client.send((msg + "\n").encode('utf-8'))
+        send_msg(client, msg.encode('utf-8'))
         entry.delete(0, tk.END)
     except:
         # Sendefehler = Verbindung wahrscheinlich unterbrochen
@@ -122,10 +141,7 @@ def receive_messages():
     """
     while True:
         try:
-            data = client.recv(1024)
-            if not data:
-                break   # Server hat Verbindung getrennt
-
+            data = recv_msg(client)
             msg = data.decode('utf-8', errors='replace').rstrip()
 
             text_area.config(state="normal")

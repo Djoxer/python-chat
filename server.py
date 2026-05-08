@@ -1,4 +1,5 @@
 import socket
+import struct
 import threading
 from datetime import datetime
 import pymysql
@@ -21,6 +22,24 @@ chat_id      = None      # wird in main() gesetzt, eine Session = ein Chat
 owner_socket = None      # erster eingeloggter Client = Server-Owner
 clients_lock = threading.Lock()  # schützt alle globalen Dicts/Listen inkl. owner_socket
 
+# ─── TCP-Framing ─────────────────────────────────────────────────────────────
+
+def _recv_exact(sock, n: int) -> bytes:
+    buf = bytearray()
+    while len(buf) < n:
+        chunk = sock.recv(n - len(buf))
+        if not chunk:
+            raise ConnectionError
+        buf += chunk
+    return bytes(buf)
+
+def send_msg(sock, data: bytes):
+    sock.sendall(struct.pack('>I', len(data)) + data)
+
+def recv_msg(sock) -> bytes:
+    length = struct.unpack('>I', _recv_exact(sock, 4))[0]
+    return _recv_exact(sock, length)
+
 # ─── Hilfsfunktionen ─────────────────────────────────────────────────────────
 
 def get_datetime():
@@ -35,7 +54,7 @@ def broadcast(message: bytes):
         targets = clients[:]
     for c in targets:
         try:
-            c.send(message)
+            send_msg(c, message)
         except:
             cleanup_client(c)
 
@@ -65,10 +84,7 @@ def handle_client(client):
 
     while True:
         try:
-            raw = client.recv(4096)
-            if not raw:
-                raise ConnectionError   # leeres Paket = Client hat Verbindung getrennt
-
+            raw = recv_msg(client)
             msg = raw.decode('utf-8', errors='replace').strip()
 
             if msg.lower() == "/quit":
@@ -85,7 +101,7 @@ def handle_client(client):
                 with clients_lock:
                     is_owner = (client is owner_socket)
                 if not is_owner and username not in ADMINS:
-                    client.send("⛔ Nur Admins oder der Server-Owner dürfen den Server herunterfahren.\n".encode('utf-8'))
+                    send_msg(client, "⛔ Nur Admins oder der Server-Owner dürfen den Server herunterfahren.\n".encode('utf-8'))
                 else:
                     broadcast("🔴 SERVER WIRD HERUNTERGEFAHREN...\n".encode('utf-8'))
                     print(f"[{get_datetime()}] SHUTDOWN durch {username}")
@@ -120,7 +136,7 @@ def shutdown_server():
         targets = clients[:]
     for c in targets:
         try:
-            c.send("🔴 Server wurde vom Administrator heruntergefahren.\n".encode('utf-8'))
+            send_msg(c, "🔴 Server wurde vom Administrator heruntergefahren.\n".encode('utf-8'))
             c.close()
         except:
             pass
@@ -147,9 +163,9 @@ def main():
 
         # Username direkt empfangen — Client sendet ihn als erstes nach Connect
         try:
-            username = client.recv(1024).decode('utf-8').strip()
+            username = recv_msg(client).decode('utf-8').strip()
             if not username:
-                client.send("ERROR:Kein Username angegeben\n".encode('utf-8'))
+                send_msg(client, b"ERROR:Kein Username angegeben")
                 client.close()
                 continue
         except:
@@ -162,12 +178,12 @@ def main():
             is_first = (owner_socket is None)
 
         if taken:
-            client.send("ERROR:Username bereits vergeben\n".encode('utf-8'))
+            send_msg(client, b"ERROR:Username bereits vergeben")
             client.close()
             print(f"[{get_datetime()}] Abgewiesen (Username vergeben): {username}")
             continue
 
-        client.send("OK\n".encode('utf-8'))
+        send_msg(client, b"OK")
 
         # User in DB registrieren, ID cachen
         uid = db.join_user(chat_id, username, addr[0])
