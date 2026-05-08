@@ -1,4 +1,5 @@
 import os
+import threading
 import pymysql
 from datetime import datetime
 from typing import Optional, List, Dict
@@ -19,7 +20,7 @@ class PythonChatDB:
         password: str = os.getenv("DB_PASSWORD", ""),
         db:       str = os.getenv("DB_NAME",     "pythonchat"),
     ):
-        self.db = pymysql.connect(
+        self._cfg = dict(
             host=host,
             user=user,
             password=password,
@@ -27,9 +28,18 @@ class PythonChatDB:
             charset="utf8mb4",
             cursorclass=pymysql.cursors.DictCursor,
         )
+        self._local = threading.local()
+
+    @property
+    def db(self):
+        """Gibt die Verbindung des aufrufenden Threads zurück; legt sie bei Bedarf an."""
+        if not hasattr(self._local, 'conn'):
+            self._local.conn = pymysql.connect(**self._cfg)
+        return self._local.conn
 
     def close(self):
-        self.db.close()
+        if hasattr(self._local, 'conn'):
+            self._local.conn.close()
 
     # ─── Chats ────────────────────────────────────────────────────────────────
 
